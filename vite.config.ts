@@ -146,7 +146,7 @@ function authPopupPlugin(): Plugin {
 // The dev server starts once `src/router.tsx` and `src/routes/` exist — see
 // AGENTS.md § "First scaffold".
 const pages = process.env.GITHUB_PAGES === "1";
-const pagesBase = "/clinic-saas/";
+const pagesBase = `/${(process.env.PAGES_REPO || "Medicare-SaaS").replace(/^\/+|\/+$/g, "")}/`;
 
 export default defineConfig(({ command, isPreview }) => ({
   base: pages ? pagesBase : "/",

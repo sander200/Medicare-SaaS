@@ -28,6 +28,8 @@ jobs:
           cache: npm
       - run: npm install
       - run: npm run build:pages || test -s .output/public/index.html
+        env:
+          PAGES_REPO: ${{ github.event.repository.name }}
       - run: cp .output/public/index.html .output/public/404.html && touch .output/public/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
