@@ -249,6 +249,88 @@ export function waLink(number: string, message: string) {
   return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
 }
 
+export type BookingTicket = {
+  id: string;
+  nome: string;
+  telefone: string;
+  email: string;
+  data: string;
+  hora: string;
+  tipo: Tipo;
+};
+
+export function brWhatsapp(raw: string) {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("55") && digits.length >= 12) return digits;
+  if (digits.length >= 10 && digits.length <= 11) return `55${digits}`;
+  return digits;
+}
+
+export function appHome() {
+  if (typeof window === "undefined") return "";
+  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+  return `${window.location.origin}${base}/`;
+}
+
+function encodeTicket(ticket: BookingTicket) {
+  const json = JSON.stringify(ticket);
+  const bytes = new TextEncoder().encode(json);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+export function decodeTicket(raw: string): BookingTicket | null {
+  try {
+    const pad = raw.length % 4 === 0 ? "" : "=".repeat(4 - (raw.length % 4));
+    const binary = atob(raw.replaceAll("-", "+").replaceAll("_", "/") + pad);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const data = JSON.parse(new TextDecoder().decode(bytes)) as Partial<BookingTicket>;
+    if (!data.id || !data.nome || !data.data || !data.hora || !data.tipo) return null;
+    if (data.tipo !== "Presencial" && data.tipo !== "Telemedicina" && data.tipo !== "Retorno") return null;
+    return {
+      id: data.id,
+      nome: data.nome,
+      telefone: data.telefone ?? "",
+      email: data.email ?? "",
+      data: data.data,
+      hora: data.hora,
+      tipo: data.tipo,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function doctorRequestLink(ticket: BookingTicket) {
+  return `${appHome()}?pedido=${encodeTicket(ticket)}`;
+}
+
+export function patientConfirmLink(id: string) {
+  return `${appHome()}?ok=${encodeURIComponent(id)}`;
+}
+
+export function doctorRequestMessage(ticket: BookingTicket) {
+  return [
+    "Pedido de horário — Clínica Azul",
+    ticket.nome,
+    `${formatISODate(ticket.data)} às ${ticket.hora}`,
+    ticket.tipo,
+    ticket.telefone ? `WhatsApp do paciente: ${formatWa(brWhatsapp(ticket.telefone))}` : "",
+    `Abrir na agenda: ${doctorRequestLink(ticket)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function patientConfirmMessage(ticket: Pick<BookingTicket, "id" | "nome" | "data" | "hora" | "tipo">) {
+  return [
+    `Olá ${ticket.nome}, a Clínica Azul confirmou seu horário.`,
+    `${formatISODate(ticket.data)} às ${ticket.hora} · ${ticket.tipo}`,
+    `Marcar na sua agenda: ${patientConfirmLink(ticket.id)}`,
+  ].join("\n");
+}
+
 export function reminderMessage(patient: Patient, date: string, time: string, clinic: string) {
   return `Olá ${patient.nome}, lembrete da sua consulta em ${formatISODate(date)} às ${time} — ${clinic}.`;
 }

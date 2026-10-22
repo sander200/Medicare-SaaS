@@ -6,6 +6,7 @@ import {
   makeAccessCode,
   nid,
   type Appointment,
+  type BookingTicket,
   type ClinicConfig,
   type DocFile,
   type Patient,
@@ -27,8 +28,10 @@ type ClinicState = {
   lockProfessional: () => void;
   addPatient: (input: Omit<Patient, "id" | "status">) => string;
   updatePatient: (id: string, patch: Partial<Omit<Patient, "id">>) => void;
-  addAppointment: (input: Omit<Appointment, "id" | "documentos" | "notas" | "medicamentoRascunho" | "posologia"> & { documentos?: DocFile[] }) => string;
+  addAppointment: (input: Omit<Appointment, "id" | "documentos" | "notas" | "medicamentoRascunho" | "posologia"> & { documentos?: DocFile[]; id?: string }) => string;
   updateAppointment: (id: string, patch: Partial<Omit<Appointment, "id">>) => void;
+  importBooking: (ticket: BookingTicket) => boolean;
+  confirmByTicket: (id: string) => boolean;
   resetDemo: () => void;
 };
 
@@ -82,7 +85,7 @@ export const useClinic = create<ClinicState>()(
           patients: get().patients.map((p) => (p.id === id ? { ...p, ...patch } : p)),
         }),
       addAppointment: (input) => {
-        const id = nid("A");
+        const id = input.id ?? nid("A");
         const appointment: Appointment = {
           notas: "",
           medicamentoRascunho: "",
@@ -98,6 +101,51 @@ export const useClinic = create<ClinicState>()(
         set({
           appointments: get().appointments.map((a) => (a.id === id ? { ...a, ...patch } : a)),
         }),
+      importBooking: (ticket) => {
+        if (get().appointments.some((a) => a.id === ticket.id)) return false;
+        const phone = ticket.telefone.replace(/\D/g, "");
+        const known = get().patients.find((p) => phone && p.telefone.replace(/\D/g, "") === phone);
+        const patientId = known?.id ?? nid("P");
+        const patients = known
+          ? get().patients
+          : [
+              ...get().patients,
+              {
+                id: patientId,
+                nome: ticket.nome,
+                nascimento: "",
+                telefone: phone,
+                email: ticket.email,
+                status: "Ativo" as const,
+                alergias: "",
+                consentimentoTelemedicina: true,
+              },
+            ];
+        const appointment: Appointment = {
+          id: ticket.id,
+          patientId,
+          data: ticket.data,
+          hora: ticket.hora,
+          tipo: ticket.tipo,
+          status: "Pendente",
+          sintomas: "",
+          medicamentos: "",
+          alergias: "",
+          notas: "",
+          medicamentoRascunho: "",
+          posologia: "",
+          documentos: [],
+        };
+        set({ patients, appointments: [...get().appointments, appointment] });
+        return true;
+      },
+      confirmByTicket: (id) => {
+        if (!get().appointments.some((a) => a.id === id)) return false;
+        set({
+          appointments: get().appointments.map((a) => (a.id === id ? { ...a, status: "Confirmado" } : a)),
+        });
+        return true;
+      },
       resetDemo: () => {
         set({
           patients: [],

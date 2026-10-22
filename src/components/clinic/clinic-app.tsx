@@ -19,7 +19,10 @@ import {
   TENANTS,
   accessMailLink,
   agendaCsv,
+  brWhatsapp,
   changeMessage,
+  decodeTicket,
+  doctorRequestMessage,
   documentMailLink,
   downloadText,
   evaluationText,
@@ -28,6 +31,7 @@ import {
   formatWa,
   organizeIntake,
   patientsCsv,
+  patientConfirmMessage,
   prescriptionText,
   reminderMessage,
   sortBySchedule,
@@ -78,6 +82,41 @@ export function ClinicApp() {
     const finish = () => {
       setAgendaDate((current) => current || todayISO());
       if (!useClinic.getState().tenantId) useClinic.getState().enter("CL001");
+      const params = new URLSearchParams(window.location.search);
+      const pedido = params.get("pedido");
+      const ok = params.get("ok");
+      if (pedido) {
+        const ticket = decodeTicket(pedido);
+        if (ticket) {
+          const added = useClinic.getState().importBooking(ticket);
+          setAgendaDate(ticket.data);
+          setSelectedId(ticket.id);
+          if (useClinic.getState().proOpen) {
+            setArea("pro");
+            setTab("agenda");
+          } else setArea("account");
+          setNotice(
+            added
+              ? "Pedido novo na agenda. Entre na área profissional e aprove o horário."
+              : "Esse pedido já está na agenda do médico.",
+          );
+        }
+      } else if (ok) {
+        const found = useClinic.getState().confirmByTicket(ok);
+        setArea("patient");
+        setPatientTab("book");
+        setNotice(
+          found
+            ? "Consulta confirmada e marcada na sua agenda."
+            : "Abra este link no celular em que você pediu o horário.",
+        );
+      }
+      if (pedido || ok) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("pedido");
+        url.searchParams.delete("ok");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }
       setReady(true);
     };
     const unsub = useClinic.persist.onFinishHydration(finish);
@@ -356,6 +395,7 @@ function Book({ setNotice }: { setNotice: (s: string) => void }) {
   const [data, setData] = useState(todayISO());
   const [hora, setHora] = useState("09:00");
   const [tipo, setTipo] = useState<Tipo>("Presencial");
+  const [sent, setSent] = useState<{ href: string; label: string } | null>(null);
 
   const upcoming = sortBySchedule(appointments.filter((a) => a.status !== "Cancelado")).slice(0, 8);
 
@@ -363,24 +403,26 @@ function Book({ setNotice }: { setNotice: (s: string) => void }) {
     <section className="panel mx-auto max-w-3xl p-5">
       <p className="text-xs font-semibold tracking-widest text-accent uppercase">Paciente</p>
       <h2 className="text-2xl">Agendar consulta</h2>
-      <p className="mt-1 text-sm text-muted">Primeira tela da clínica. Escolha consulta, retorno ou telemedicina.</p>
+      <p className="mt-1 text-sm text-muted">
+        Peça o horário e avise o médico no WhatsApp. Quando ele aprovar, você recebe a confirmação para marcar aqui.
+      </p>
       <form
         className="mt-4 grid gap-3 sm:grid-cols-2"
         onSubmit={(e) => {
           e.preventDefault();
-          const digits = telefone.replace(/\D/g, "");
-          const existing = patients.find((p) => digits && p.telefone.replace(/\D/g, "") === digits);
+          const phone = brWhatsapp(telefone);
+          const existing = patients.find((p) => phone && p.telefone.replace(/\D/g, "") === phone);
           const patientId =
             existing?.id ??
             addPatient({
               nome: nome.trim(),
               nascimento: "",
-              telefone: digits || telefone.trim(),
+              telefone: phone,
               email: email.trim(),
               alergias: "",
               consentimentoTelemedicina: true,
             });
-          addAppointment({
+          const id = addAppointment({
             patientId,
             data,
             hora,
@@ -390,7 +432,20 @@ function Book({ setNotice }: { setNotice: (s: string) => void }) {
             medicamentos: "",
             alergias: existing?.alergias ?? "",
           });
-          setNotice("Pedido de horário registrado. A clínica confirma na agenda.");
+          const ticket = {
+            id,
+            nome: nome.trim(),
+            telefone: phone,
+            email: email.trim(),
+            data,
+            hora,
+            tipo,
+          };
+          setSent({
+            href: waLink(CLINIC_WHATSAPP, doctorRequestMessage(ticket)),
+            label: "Avisar o médico no WhatsApp",
+          });
+          setNotice("Horário guardado na sua agenda. Envie o WhatsApp para o médico aprovar.");
           setNome("");
           setTelefone("");
           setEmail("");
@@ -428,19 +483,27 @@ function Book({ setNotice }: { setNotice: (s: string) => void }) {
           Pedir horário
         </button>
       </form>
+      {sent ? (
+        <a className="btn btn-ok mt-4" href={sent.href} target="_blank" rel="noreferrer">
+          <MessageCircle className="size-4" aria-hidden="true" />
+          {sent.label}
+        </a>
+      ) : null}
+      <h3 className="mt-6 text-lg">Sua agenda</h3>
       {upcoming.length ? (
-        <ul className="mt-5 space-y-2">
+        <ul className="mt-3 space-y-2">
           {upcoming.map((a) => {
             const p = patients.find((x) => x.id === a.patientId);
             return (
               <li key={a.id} className="rounded-xl border border-line px-3 py-2 text-sm">
-                {formatISODate(a.data)} · {a.hora} · {p?.nome ?? "Paciente"} · {a.tipo} · {a.status}
+                {formatISODate(a.data)} · {a.hora} · {p?.nome ?? "Paciente"} · {a.tipo} ·{" "}
+                {a.status === "Confirmado" ? "Marcado" : a.status === "Pendente" ? "Aguardando o médico" : a.status}
               </li>
             );
           })}
         </ul>
       ) : (
-        <p className="mt-4 text-sm text-muted">Nenhum horário pedido ainda.</p>
+        <p className="mt-3 text-sm text-muted">Nenhum horário pedido ainda.</p>
       )}
     </section>
   );
@@ -546,10 +609,31 @@ function Agenda({
                           type="button"
                           onClick={() => {
                             updateAppointment(a.id, { status: "Confirmado" });
-                            setNotice("Consulta confirmada.");
+                            const phone = brWhatsapp(patient?.telefone ?? "");
+                            if (phone) {
+                              window.open(
+                                waLink(
+                                  phone,
+                                  patientConfirmMessage({
+                                    id: a.id,
+                                    nome: patient?.nome ?? "paciente",
+                                    data: a.data,
+                                    hora: a.hora,
+                                    tipo: a.tipo,
+                                  }),
+                                ),
+                                "_blank",
+                                "noopener,noreferrer",
+                              );
+                            }
+                            setNotice(
+                              phone
+                                ? "Horário aprovado. Envie o WhatsApp para marcar na agenda do paciente."
+                                : "Horário aprovado neste celular.",
+                            );
                           }}
                         >
-                          Confirmar
+                          Aprovar e avisar
                         </button>
                       ) : null}
                     </div>
